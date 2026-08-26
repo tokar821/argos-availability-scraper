@@ -1,0 +1,23 @@
+# Binaries
+/argos
+/argos.exe
+*.exe
+*.test
+
+# Chrome / probe scratch
+_chrome_dump/
+_probe_*.py
+_probe_*.html
+_probe_*.json
+_cookies.txt
+_tls_probe/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Temp chrome profiles
+argos-chrome-*/

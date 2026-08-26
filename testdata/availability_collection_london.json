@@ -1,0 +1,97 @@
+{
+  "stores": [
+    {
+      "distance": "0.316",
+      "storeinfo": {
+        "store_id": "6516",
+        "legacy_name": "Holborn Circus (Argos Collection Point)",
+        "town": "London",
+        "postcode": "EC1N 2TD",
+        "address_line": ["123 Holborn", null, null, null, null]
+      },
+      "availability": [
+        {
+          "requested": "2026-08-26T21:02:07.412Z",
+          "nodeId": "6516",
+          "sku": "7885338",
+          "quantityRequested": 1,
+          "quantityAvailable": 0,
+          "excluded": false
+        }
+      ],
+      "messages": {
+        "7885338": {
+          "messageKey": "COLLECTION_OUT_OF_STOCK",
+          "text": "Not in stock here",
+          "icon": "out_of_stock",
+          "analyticsCode": "c5",
+          "fasttrack": "false"
+        },
+        "collection_summary": {
+          "messageKey": "SINGLE_SKU_COLLECTION_MESSAGE_AT",
+          "text": "Not in stock here",
+          "icon": "out_of_stock",
+          "analyticsCode": "tc0",
+          "fasttrack": "false"
+        }
+      },
+      "store_id": "6516"
+    },
+    {
+      "distance": "0.416",
+      "storeinfo": {
+        "store_id": "6520",
+        "legacy_name": "Farringdon Sainsbury's (Argos Collection Point)",
+        "town": "London",
+        "postcode": "EC1M 3HA",
+        "address_line": ["17-23 Farringdon Road", null, null, null, null]
+      },
+      "availability": [
+        {
+          "requested": "2026-08-26T21:02:07.412Z",
+          "nodeId": "6520",
+          "sku": "7885338",
+          "quantityRequested": 1,
+          "quantityAvailable": 1,
+          "customerAvailableBy": "2026-08-27T16:00:00Z",
+          "cutoff": "2026-08-27T11:00:00Z",
+          "excluded": false,
+          "leadTime": "2026-08-27T16:00:00Z"
+        }
+      ],
+      "messages": {
+        "7885338": {
+          "messageKey": "COLLECTION_FROM_TOMORROW_AT_TIME",
+          "text": "Order now, collect from 5pm tomorrow",
+          "icon": "calendar",
+          "analyticsCode": "c3|1",
+          "fasttrack": "false"
+        },
+        "collection_summary": {
+          "messageKey": "SINGLE_SKU_COLLECTION_MESSAGE_AT",
+          "text": "Order now, collect from 5pm tomorrow",
+          "icon": "calendar",
+          "analyticsCode": "tc0",
+          "fasttrack": "false"
+        }
+      },
+      "store_id": "6520"
+    }
+  ],
+  "suggestions": [],
+  "delivery": null,
+  "products": {
+    "7885338": {
+      "data": {
+        "id": "7885338",
+        "attributes": {
+          "deliverable": true,
+          "collectable": true,
+          "globallyOutOfStock": false
+        }
+      }
+    }
+  },
+  "safeMode": { "stockCheckDisabled": false },
+  "empty": false
+}

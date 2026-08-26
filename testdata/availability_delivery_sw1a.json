@@ -1,0 +1,52 @@
+{
+  "stores": [],
+  "suggestions": [],
+  "delivery": [
+    {
+      "postcode": "SW1A1AA",
+      "messages": {
+        "7885338": {
+          "messageKey": "DELIVERY_1_MAN_FROM_TOMORROW",
+          "text": "Next day delivery available",
+          "icon": "tick",
+          "analyticsCode": "d2-1m|1",
+          "fasttrack": "false"
+        },
+        "delivery_summary": {
+          "messageKey": "SINGLE_SKU_DELIVERY_MESSAGE_AT",
+          "text": "Next day delivery available",
+          "icon": "tick",
+          "analyticsCode": "td0",
+          "fasttrack": "false"
+        }
+      },
+      "availability": [
+        {
+          "requested": "2026-08-26T21:19:58.650Z",
+          "postcode": "SW1A1AA",
+          "sku": "7885338",
+          "quantityRequested": 1,
+          "quantityAvailable": 1,
+          "customerAvailableBy": "2026-08-27T23:00:00Z",
+          "leadTime": "2026-08-27T23:00:00Z",
+          "fulfillmentNodes": [
+            { "nodeId": "4719", "quantityFulfilled": 1, "nodeType": null }
+          ]
+        }
+      ]
+    }
+  ],
+  "products": {
+    "7885338": {
+      "data": {
+        "id": "7885338",
+        "attributes": {
+          "deliverable": true,
+          "collectable": true,
+          "globallyOutOfStock": false
+        }
+      }
+    }
+  },
+  "empty": false
+}
