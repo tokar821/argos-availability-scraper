@@ -2,7 +2,6 @@ package model
 
 import "time"
 
-// Result is the normalized availability payload returned by the CLI.
 type Result struct {
 	ProductID   string    `json:"product_id"`
 	Title       string    `json:"title"`
@@ -23,7 +22,7 @@ type Price struct {
 }
 
 type ModeResult struct {
-	Status           string       `json:"status"` // available | unavailable | unknown | error
+	Status           string       `json:"status"`
 	Message          string       `json:"message,omitempty"`
 	EarliestDate     string       `json:"earliest_date,omitempty"`
 	EarliestWindow   string       `json:"earliest_window,omitempty"`

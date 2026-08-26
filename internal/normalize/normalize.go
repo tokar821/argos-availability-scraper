@@ -56,7 +56,7 @@ func NormalizeCollection(productID string, resp *argos.AvailabilityResponse, err
 
 	var earliest time.Time
 	var earliestSet bool
-	var bestMsg string
+	var bestMsg, bestWindow string
 	availableCount := 0
 
 	for _, s := range resp.Stores {
@@ -71,18 +71,16 @@ func NormalizeCollection(productID string, resp *argos.AvailabilityResponse, err
 		if window == "" {
 			window = store.Message
 		}
-		if !earliestSet || (hasTime && t.Before(earliest)) || (!hasTime && bestMsg == "") {
+		if !earliestSet || (hasTime && t.Before(earliest)) {
 			if hasTime {
 				earliest = t
 				earliestSet = true
 			}
-			if bestMsg == "" || hasTime {
-				if store.Message != "" {
-					bestMsg = store.Message
-				}
-				if window != "" {
-					out.EarliestWindow = window
-				}
+			if store.Message != "" {
+				bestMsg = store.Message
+			}
+			if window != "" {
+				bestWindow = window
 			}
 		}
 	}
@@ -91,6 +89,7 @@ func NormalizeCollection(productID string, resp *argos.AvailabilityResponse, err
 	case availableCount > 0:
 		out.Status = "available"
 		out.Message = bestMsg
+		out.EarliestWindow = bestWindow
 		if out.Message == "" {
 			out.Message = fmt.Sprintf("Available for collection at %d nearby store(s)", availableCount)
 		}
@@ -131,7 +130,6 @@ func NormalizeDelivery(productID string, resp *argos.AvailabilityResponse, err e
 	}
 	out := &model.ModeResult{}
 	if len(entries) == 0 {
-		// Town searches often return stores with origin= but delivery=null.
 		out.Status = "unavailable"
 		out.Message = "No delivery options returned for this location (a UK postcode usually works best)"
 		return out
@@ -157,7 +155,7 @@ func NormalizeDelivery(productID string, resp *argos.AvailabilityResponse, err e
 	}
 
 	switch {
-	case qty > 0 || (msg != nil && !isOutOfStock(msg.MessageKey, msg.Text)):
+	case qty > 0:
 		out.Status = "available"
 		if msg != nil {
 			out.Message = msg.Text
@@ -216,17 +214,18 @@ func normalizeStore(productID string, s argos.StoreEntry) model.Store {
 	if msg != nil {
 		store.Message = msg.Text
 		store.EarliestWindow = msg.Text
-		if qty > 0 || !isOutOfStock(msg.MessageKey, msg.Text) {
-			store.Status = "available"
-		} else {
-			store.Status = "unavailable"
-		}
-	} else if qty > 0 {
+	}
+	switch {
+	case qty > 0:
 		store.Status = "available"
-		store.Message = "In stock for collection"
-	} else {
+		if store.Message == "" {
+			store.Message = "In stock for collection"
+		}
+	default:
 		store.Status = "unavailable"
-		store.Message = "Not in stock here"
+		if store.Message == "" {
+			store.Message = "Not in stock here"
+		}
 	}
 	return store
 }

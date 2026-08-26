@@ -14,17 +14,14 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// Client fetches Argos product and availability data using a real Chrome
-// session. Argos sits behind Akamai bot management; plain HTTP clients are
-// routinely blocked, so we load the PDP in Chrome and perform same-origin
-// fetch() calls for the availability JSON APIs.
 type Client struct {
 	Timeout     time.Duration
-	Headless    bool // default false — headed Chrome is required to pass Akamai
+	Headless    bool
 	ChromePath  string
 	UserDataDir string
 
-	mu         sync.Mutex
+	mu          sync.Mutex
+	ownProfile  bool
 	allocCtx   context.Context
 	allocCancel context.CancelFunc
 	browserCtx context.Context
@@ -48,6 +45,11 @@ func (c *Client) Close() {
 	if c.allocCancel != nil {
 		c.allocCancel()
 		c.allocCancel = nil
+	}
+	if c.ownProfile && c.UserDataDir != "" {
+		_ = os.RemoveAll(c.UserDataDir)
+		c.UserDataDir = ""
+		c.ownProfile = false
 	}
 }
 
@@ -79,6 +81,7 @@ func (c *Client) ensureBrowser(parent context.Context) (context.Context, error) 
 			return nil, fmt.Errorf("create chrome profile dir: %w", err)
 		}
 		c.UserDataDir = dir
+		c.ownProfile = true
 		opts = append(opts, chromedp.UserDataDir(dir))
 	}
 
@@ -89,7 +92,6 @@ func (c *Client) ensureBrowser(parent context.Context) (context.Context, error) 
 	c.browserCtx = browserCtx
 	c.browserCancel = browserCancel
 
-	// Warm the browser process.
 	if err := chromedp.Run(browserCtx); err != nil {
 		browserCancel()
 		allocCancel()
@@ -99,7 +101,6 @@ func (c *Client) ensureBrowser(parent context.Context) (context.Context, error) 
 	return c.browserCtx, nil
 }
 
-// FetchProduct loads the product page and parses title/price.
 func (c *Client) FetchProduct(ctx context.Context, productID string) (ProductInfo, error) {
 	browserCtx, err := c.ensureBrowser(ctx)
 	if err != nil {
@@ -130,7 +131,6 @@ func (c *Client) FetchProduct(ctx context.Context, productID string) (ProductInf
 	}
 	info, err := ParseProductHTML(html, productID)
 	if err != nil {
-		// Fallback to document title if JSON-LD missing but page loaded.
 		if info.Title == "" && title != "" && !strings.EqualFold(title, "Access Denied") {
 			info.Title = cleanTitle(title)
 			info.ID = productID
@@ -142,7 +142,6 @@ func (c *Client) FetchProduct(ctx context.Context, productID string) (ProductInf
 	return info, nil
 }
 
-// FetchCollection queries nearby collection availability using origin=.
 func (c *Client) FetchCollection(ctx context.Context, productID, location string) (*AvailabilityResponse, error) {
 	q := url.Values{}
 	q.Set("origin", strings.TrimSpace(location))
@@ -154,9 +153,6 @@ func (c *Client) FetchCollection(ctx context.Context, productID, location string
 	return c.fetchAvailability(ctx, productID, AvailabilityPath+"?"+q.Encode())
 }
 
-// FetchDelivery queries home delivery availability using postcode=.
-// Argos returns delivery options when the locator API is called with postcode=
-// (not origin=). Town names may return empty delivery; UK postcodes work best.
 func (c *Client) FetchDelivery(ctx context.Context, productID, location string) (*AvailabilityResponse, error) {
 	q := url.Values{}
 	q.Set("postcode", strings.TrimSpace(location))
@@ -178,7 +174,6 @@ func (c *Client) fetchAvailability(ctx context.Context, productID, pathAndQuery 
 	runCtx, cancel := context.WithTimeout(browserCtx, timeout)
 	defer cancel()
 
-	// Ensure we are on the product origin so fetch is same-origin.
 	productURL := ProductURL(productID)
 	var href string
 	_ = chromedp.Run(runCtx, chromedp.Location(&href))

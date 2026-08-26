@@ -1,9 +1,6 @@
 package argos_test
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/tokar821/argos-availability-scraper/internal/argos"
@@ -15,10 +12,11 @@ func TestResolveProductID(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"7885338", "7885338", true},
-		{"https://www.argos.co.uk/product/7885338", "7885338", true},
-		{"https://www.argos.co.uk/product/7885338?utm_source=x", "7885338", true},
-		{"www.argos.co.uk/product/7885338", "7885338", true},
+		{"12345678", "12345678", true},
+		{"9876543", "9876543", true},
+		{"https://www.argos.co.uk/product/12345678", "12345678", true},
+		{"https://www.argos.co.uk/product/9876543?ref=abc", "9876543", true},
+		{"www.argos.co.uk/product/12345678", "12345678", true},
 		{"", "", false},
 		{"not-a-product", "", false},
 	}
@@ -37,39 +35,36 @@ func TestResolveProductID(t *testing.T) {
 }
 
 func TestParseProductHTML(t *testing.T) {
-	html := readTestdata(t, "product_snippet.html")
-	info, err := argos.ParseProductHTML(html, "7885338")
+	html := `<html><head>
+<script type="application/ld+json">{"@type":"Product","name":"Example Product","offers":{"price":"19.99"}}</script>
+<title>Example Product | Argos</title>
+</head><body></body></html>`
+
+	info, err := argos.ParseProductHTML(html, "12345678")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Title == "" {
-		t.Fatal("expected title")
+	if info.Title != "Example Product" {
+		t.Fatalf("title=%q", info.Title)
 	}
-	if info.Price == nil || *info.Price != 10.00 {
-		t.Fatalf("expected price 10.00, got %#v", info.Price)
+	if info.Price == nil || *info.Price != 19.99 {
+		t.Fatalf("price=%v", info.Price)
 	}
-	if info.ID != "7885338" {
+	if info.ID != "12345678" {
 		t.Fatalf("id=%s", info.ID)
 	}
 }
 
-func TestParseProductHTMLBlocked(t *testing.T) {
-	_, err := argos.ParseProductHTML(`<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD><BODY><H1>Access Denied</H1></BODY></HTML>`, "1")
+func TestParseProductHTMLNotFound(t *testing.T) {
+	_, err := argos.ParseProductHTML(`<html><body>We can't find this page</body></html>`, "12345678")
 	if err == nil {
-		t.Fatal("expected blocked error")
+		t.Fatal("expected not found error")
 	}
 }
 
-func readTestdata(t *testing.T, name string) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("caller")
+func TestParseProductHTMLBlocked(t *testing.T) {
+	_, err := argos.ParseProductHTML(`<html><head><title>Access Denied</title></head><body>Access Denied</body></html>`, "12345678")
+	if err == nil {
+		t.Fatal("expected blocked error")
 	}
-	path := filepath.Join(filepath.Dir(file), "..", "..", "testdata", name)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
 }

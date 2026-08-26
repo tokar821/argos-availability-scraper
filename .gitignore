@@ -21,3 +21,5 @@ Thumbs.db
 
 # Temp chrome profiles
 argos-chrome-*/
+www.argos.co.uk.har
+*.har

@@ -2,9 +2,7 @@ package normalize_test
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"runtime"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,90 +10,152 @@ import (
 	"github.com/tokar821/argos-availability-scraper/internal/normalize"
 )
 
-func TestNormalizeCollectionFromFixture(t *testing.T) {
-	raw := readTestdata(t, "availability_collection_london.json")
+const testProductID = "12345678"
+
+const collectionFixture = `{
+  "stores": [
+    {
+      "distance": "2.5",
+      "storeinfo": {
+        "store_id": "100",
+        "legacy_name": "Example Store A",
+        "town": "Example Town",
+        "postcode": "AB1 2CD",
+        "address_line": ["1 High Street"]
+      },
+      "availability": [{
+        "sku": "12345678",
+        "quantityAvailable": 0,
+        "customerAvailableBy": "2026-08-28T17:00:00Z"
+      }],
+      "messages": {"12345678": {"text": "Out of stock"}},
+      "store_id": "100"
+    },
+    {
+      "distance": "1.2",
+      "storeinfo": {
+        "store_id": "200",
+        "legacy_name": "Example Store B",
+        "town": "Example Town",
+        "postcode": "AB1 2CD",
+        "address_line": ["2 High Street"]
+      },
+      "availability": [{
+        "sku": "12345678",
+        "quantityAvailable": 3,
+        "customerAvailableBy": "2026-08-27T17:00:00Z"
+      }],
+      "messages": {"12345678": {"text": "Order now, collect from 5pm tomorrow"}},
+      "store_id": "200"
+    }
+  ]
+}`
+
+const deliveryFixture = `{
+  "delivery": [{
+    "postcode": "AB1 2CD",
+    "messages": {"12345678": {"text": "Next day delivery available"}},
+    "availability": [{
+      "sku": "12345678",
+      "quantityAvailable": 5,
+      "customerAvailableBy": "2026-08-28T23:00:00Z"
+    }],
+    "fee": {"amount": 3.95, "currency": "GBP", "display": "£3.95"}
+  }]
+}`
+
+func TestNormalizeCollection(t *testing.T) {
 	var resp argos.AvailabilityResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	if err := json.Unmarshal([]byte(collectionFixture), &resp); err != nil {
 		t.Fatal(err)
 	}
-	out := normalize.NormalizeCollection("7885338", &resp, nil)
+	out := normalize.NormalizeCollection(testProductID, &resp, nil)
 	if out.Status != "available" {
-		t.Fatalf("status=%s message=%s", out.Status, out.Message)
+		t.Fatalf("status=%s", out.Status)
 	}
-	if len(out.Stores) < 2 {
-		t.Fatalf("expected stores, got %d", len(out.Stores))
+	if len(out.Stores) != 2 {
+		t.Fatalf("stores=%d", len(out.Stores))
 	}
-	// First store in fixture is OOS; second is available.
-	if out.Stores[0].Status != "unavailable" {
-		t.Fatalf("store0 status=%s", out.Stores[0].Status)
+	if out.Stores[0].Status != "unavailable" || out.Stores[1].Status != "available" {
+		t.Fatalf("store statuses: %s, %s", out.Stores[0].Status, out.Stores[1].Status)
 	}
-	if out.Stores[1].Status != "available" {
-		t.Fatalf("store1 status=%s msg=%s", out.Stores[1].Status, out.Stores[1].Message)
-	}
-	if out.Stores[1].Name == "" || out.Stores[1].DistanceMiles == nil {
-		t.Fatalf("expected name/distance on available store: %#v", out.Stores[1])
-	}
-	if out.EarliestDate == "" {
-		t.Fatal("expected earliest collection date")
+	if out.Message != "Order now, collect from 5pm tomorrow" {
+		t.Fatalf("message=%q", out.Message)
 	}
 }
 
-func TestNormalizeDeliveryFromFixture(t *testing.T) {
-	raw := readTestdata(t, "availability_delivery_sw1a.json")
+func TestNormalizeCollectionUnavailable(t *testing.T) {
 	var resp argos.AvailabilityResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	if err := json.Unmarshal([]byte(collectionFixture), &resp); err != nil {
 		t.Fatal(err)
 	}
-	out := normalize.NormalizeDelivery("7885338", &resp, nil)
-	if out.Status != "available" {
-		t.Fatalf("status=%s message=%s", out.Status, out.Message)
+	for i := range resp.Stores {
+		if len(resp.Stores[i].Availability) > 0 {
+			resp.Stores[i].Availability[0].QuantityAvailable = 0
+		}
 	}
-	if out.Message == "" {
-		t.Fatal("expected delivery message")
-	}
-	if out.EarliestDate == "" {
-		t.Fatal("expected earliest delivery date")
-	}
-}
-
-func TestNormalizeDeliveryEmpty(t *testing.T) {
-	resp := &argos.AvailabilityResponse{Delivery: json.RawMessage("null")}
-	out := normalize.NormalizeDelivery("7885338", resp, nil)
+	out := normalize.NormalizeCollection(testProductID, &resp, nil)
 	if out.Status != "unavailable" {
 		t.Fatalf("status=%s", out.Status)
 	}
 }
 
-func TestBuildResultBoth(t *testing.T) {
-	price := 10.0
-	product := argos.ProductInfo{ID: "7885338", Title: "Hot Wheels", Price: &price, URL: "https://www.argos.co.uk/product/7885338"}
-	var collection argos.AvailabilityResponse
-	if err := json.Unmarshal([]byte(readTestdata(t, "availability_collection_london.json")), &collection); err != nil {
-		t.Fatal(err)
-	}
-	var delivery argos.AvailabilityResponse
-	if err := json.Unmarshal([]byte(readTestdata(t, "availability_delivery_sw1a.json")), &delivery); err != nil {
-		t.Fatal(err)
-	}
-	res := normalize.BuildResult(product, "SW1A 1AA", "both", time.Date(2026, 8, 26, 21, 0, 0, 0, time.UTC), &collection, &delivery, nil, nil)
-	if res.Collection == nil || res.Delivery == nil {
-		t.Fatal("expected both modes")
-	}
-	if res.Price == nil || res.Price.Display != "£10.00" {
-		t.Fatalf("price=%#v", res.Price)
+func TestNormalizeCollectionError(t *testing.T) {
+	out := normalize.NormalizeCollection(testProductID, nil, fmt.Errorf("blocked: Access Denied"))
+	if out.Status != "error" || out.Error == nil || out.Error.Code != "blocked" {
+		t.Fatalf("got %#v", out)
 	}
 }
 
-func readTestdata(t *testing.T, name string) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("caller")
-	}
-	path := filepath.Join(filepath.Dir(file), "..", "..", "testdata", name)
-	b, err := os.ReadFile(path)
-	if err != nil {
+func TestNormalizeDelivery(t *testing.T) {
+	var resp argos.AvailabilityResponse
+	if err := json.Unmarshal([]byte(deliveryFixture), &resp); err != nil {
 		t.Fatal(err)
 	}
-	return string(b)
+	out := normalize.NormalizeDelivery(testProductID, &resp, nil)
+	if out.Status != "available" {
+		t.Fatalf("status=%s", out.Status)
+	}
+	if out.Fee == nil || out.Fee.Display != "£3.95" {
+		t.Fatalf("fee=%#v", out.Fee)
+	}
+	if out.EarliestDate == "" {
+		t.Fatal("expected earliest date")
+	}
+}
+
+func TestNormalizeDeliveryEmpty(t *testing.T) {
+	resp := &argos.AvailabilityResponse{Delivery: json.RawMessage("null")}
+	out := normalize.NormalizeDelivery(testProductID, resp, nil)
+	if out.Status != "unavailable" {
+		t.Fatalf("status=%s", out.Status)
+	}
+}
+
+func TestBuildResult(t *testing.T) {
+	price := 19.99
+	product := argos.ProductInfo{
+		ID:    testProductID,
+		Title: "Example Product",
+		Price: &price,
+		URL:   "https://www.argos.co.uk/product/" + testProductID,
+	}
+	var collection, delivery argos.AvailabilityResponse
+	if err := json.Unmarshal([]byte(collectionFixture), &collection); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(deliveryFixture), &delivery); err != nil {
+		t.Fatal(err)
+	}
+	res := normalize.BuildResult(
+		product, "AB1 2CD", "both",
+		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		&collection, &delivery, nil, nil,
+	)
+	if res.Collection == nil || res.Delivery == nil {
+		t.Fatal("expected both modes")
+	}
+	if res.Price == nil || res.Price.Display != "£19.99" {
+		t.Fatalf("price=%#v", res.Price)
+	}
 }

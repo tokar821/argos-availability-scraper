@@ -21,7 +21,7 @@ func main() {
 func run() int {
 	var (
 		product   = flag.String("product", "", "Argos product ID or product URL")
-		location  = flag.String("location", "", "UK postcode or town (e.g. SW1A 1AA or London)")
+		location  = flag.String("location", "", "UK postcode or town")
 		mode      = flag.String("mode", "both", "collection | delivery | both")
 		jsonOut   = flag.Bool("json", true, "print normalized JSON (default true)")
 		quiet     = flag.Bool("quiet", false, "suppress human-readable console summary")
@@ -31,7 +31,6 @@ func run() int {
 	)
 	flag.Parse()
 
-	// Positional fallback: argos <product> <location> [mode]
 	args := flag.Args()
 	if *product == "" && len(args) > 0 {
 		*product = args[0]
@@ -71,7 +70,13 @@ func run() int {
 	client.ChromePath = *chromePath
 	defer client.Close()
 
-	ctx := context.Background()
+	runBudget := *timeout
+	if *mode == "both" {
+		runBudget = *timeout * 3
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), runBudget)
+	defer cancel()
+
 	checkedAt := time.Now().UTC()
 
 	productInfo, err := client.FetchProduct(ctx, productID)

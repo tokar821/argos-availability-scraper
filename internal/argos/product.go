@@ -18,7 +18,6 @@ var (
 	jsonLDBlocks     = regexp.MustCompile(`(?is)<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>`)
 )
 
-// ResolveProductID accepts a bare Argos product ID or product URL.
 func ResolveProductID(input string) (string, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -30,7 +29,6 @@ func ResolveProductID(input string) (string, error) {
 	if m := productIDFromURL.FindStringSubmatch(input); len(m) == 2 {
 		return m[1], nil
 	}
-	// Allow bare URLs without scheme
 	if strings.Contains(input, "argos.co.uk") && !strings.Contains(input, "://") {
 		return ResolveProductID("https://" + input)
 	}
@@ -47,7 +45,6 @@ func ProductURL(productID string) string {
 	return BaseURL + "/product/" + productID
 }
 
-// ParseProductHTML extracts title/price/id from a product page HTML document.
 func ParseProductHTML(html, productID string) (ProductInfo, error) {
 	info := ProductInfo{
 		ID:  productID,
@@ -104,7 +101,6 @@ func cleanTitle(s string) string {
 	s = strings.ReplaceAll(s, "&amp;", "&")
 	s = strings.ReplaceAll(s, "&apos;", "'")
 	s = strings.ReplaceAll(s, "&#39;", "'")
-	// Common Argos title pattern: "Buy X | Category | Argos"
 	s = strings.TrimPrefix(s, "Buy ")
 	if i := strings.Index(s, " | "); i > 0 {
 		s = s[:i]
@@ -126,7 +122,6 @@ func parseJSONLDProduct(raw, productID string) (title string, price *float64, ok
 		}
 		t, _ := m["@type"].(string)
 		if !strings.EqualFold(t, "Product") {
-			// Sometimes @type is an array
 			if arr, ok := m["@type"].([]any); ok {
 				found := false
 				for _, x := range arr {
@@ -149,9 +144,6 @@ func parseJSONLDProduct(raw, productID string) (title string, price *float64, ok
 		}
 		price = extractOffersPrice(m["offers"])
 		ok = title != "" || price != nil
-		if sku, _ := m["sku"].(string); sku != "" && productID != "" && sku != productID {
-			// still accept; Argos sku usually matches
-		}
 		if ok {
 			return title, price, true
 		}

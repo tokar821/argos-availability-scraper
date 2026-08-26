@@ -13,7 +13,6 @@ const (
 	AvailabilityPath = "/stores/api/orchestrator/v0/locator/availability"
 )
 
-// ProductInfo is parsed from the product detail page.
 type ProductInfo struct {
 	ID    string
 	Title string
@@ -21,7 +20,6 @@ type ProductInfo struct {
 	URL   string
 }
 
-// AvailabilityResponse mirrors Argos locator/availability JSON.
 type AvailabilityResponse struct {
 	Stores      []StoreEntry       `json:"stores"`
 	Suggestions json.RawMessage    `json:"suggestions"`
@@ -111,7 +109,6 @@ type DeliveryFee struct {
 	Display  string `json:"display"`
 }
 
-// ParseDeliveryPayload accepts delivery as null, object, or array.
 func ParseDeliveryPayload(raw json.RawMessage) ([]DeliveryEntry, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -155,7 +152,6 @@ func ParseDistanceMiles(raw string) *float64 {
 	if err != nil {
 		return nil
 	}
-	// Argos returns miles as a decimal string.
 	return &v
 }
 
