@@ -127,7 +127,7 @@ func (c *Client) FetchProduct(ctx context.Context, productID string) (ProductInf
 		return ProductInfo{}, fmt.Errorf("load product page: %w", err)
 	}
 	if strings.EqualFold(strings.TrimSpace(title), "Access Denied") || strings.Contains(html, "Access Denied") && len(html) < 5000 {
-		return ProductInfo{}, fmt.Errorf("blocked: Argos/Akamai denied access to product page (try again, or use a normal desktop network)")
+		return ProductInfo{}, fmt.Errorf("blocked: access denied to product page")
 	}
 	info, err := ParseProductHTML(html, productID)
 	if err != nil {
@@ -219,7 +219,7 @@ func (c *Client) fetchAvailability(ctx context.Context, productID, pathAndQuery 
 		return nil, fmt.Errorf("decode fetch wrapper: %w (raw=%s)", err, truncate(raw, 180))
 	}
 	if wrap.Status == 403 || strings.Contains(wrap.Body, "Access Denied") {
-		return nil, fmt.Errorf("blocked: Argos/Akamai denied availability API (HTTP %d)", wrap.Status)
+		return nil, fmt.Errorf("blocked: availability API access denied (HTTP %d)", wrap.Status)
 	}
 	if wrap.Status == 404 {
 		return nil, fmt.Errorf("not found: availability API returned 404")

@@ -26,7 +26,7 @@ func run() int {
 		jsonOut   = flag.Bool("json", true, "print normalized JSON (default true)")
 		quiet     = flag.Bool("quiet", false, "suppress human-readable console summary")
 		timeout   = flag.Duration("timeout", 75*time.Second, "per-request timeout")
-		headless  = flag.Bool("headless", false, "run Chrome headless (usually blocked by Akamai)")
+		headless  = flag.Bool("headless", false, "run Chromium headless (often returns access denied in testing)")
 		chromePath = flag.String("chrome", "", "optional path to chrome/msedge executable")
 	)
 	flag.Parse()
