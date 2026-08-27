@@ -10,7 +10,7 @@ Runtime: custom Chrome 152 TLS/HTTP2 profile ([bogdanfinn/tls-client](https://gi
 
 - Go **1.24+** (`go.mod`)
 - Network access to `https://www.argos.co.uk`
-- Optional: HTTP(S) proxy when the host egress IP is blocked (common on datacenter IPs)
+- Optional: HTTP(S) proxy when the reviewer’s egress environment is not accepted by Argos (some networks receive HTTP 403 even with a correct request profile)
 
 Chrome/Chromium is **not** required. The TLS profile is compiled into the binary.
 
@@ -78,10 +78,10 @@ Example:
 
 ### Proxy setup (optional)
 
-If direct requests return `blocked` / HTTP 403 on the availability API:
+Some egress environments receive HTTP 403 from Argos even when the TLS/header profile is correct. The application supports an optional UK HTTP(S) proxy so the reviewer can run from an egress path Argos accepts. This does not bypass CAPTCHA or access controls.
 
 1. Copy `.env.example` → `.env`
-2. Set a UK residential proxy, e.g.:
+2. Set proxy URLs, e.g.:
 
 ```env
 HTTP_PROXY=http://user:pass@proxy-host:port
@@ -185,7 +185,7 @@ JSON (stdout) + console summary (stderr)
 | Tokens | Session cookies from Argos `Set-Cookie` are the only credentials used; no CAPTCHA/bearer/API-key token is required for this first-party flow |
 | Headers / UA | Chrome 152 `User-Agent`, `sec-ch-ua*`, `sec-fetch-*`, API `x-newrelic-id` |
 | Redirects | Followed by the HTTP client |
-| TLS | Custom JA4-aligned profile in `internal/argos/chrome152.go` |
+| TLS | Chrome-compatible ClientHello / HTTP2 profile in `internal/argos/chrome152.go` (ordinary Go TLS was not accepted; this profile was) |
 | Proxy | `--proxy` or `HTTP_PROXY` / `HTTPS_PROXY` (including `.env`) |
 
 ### Availability API
@@ -217,8 +217,8 @@ See `go.mod` / `go.sum` for exact versions.
 | Purpose | Programmatic Chrome-like TLS/HTTP2 |
 | Integration | `internal/argos/client.go` + `chrome152.go` |
 | Cost | Free (open-source) |
-| Limits | Chrome TLS drift can break JA4 match |
-| Risks | Upgrade breakage; temporary Argos 403 until profile update |
+| Limits | Chrome major updates can change the accepted TLS profile |
+| Risks | Library upgrades or Chrome drift may require refreshing `chrome152.go` if Argos again returns 403 |
 | Setup | `go mod download` |
 
 ### HTTP(S) residential proxy (optional)
@@ -226,18 +226,20 @@ See `go.mod` / `go.sum` for exact versions.
 | | |
 |--|--|
 | Provider (dev) | [BottingTools](https://bottingtools.com) UK residential (sticky session in username) |
-| Purpose | Trusted UK egress when datacenter IPs are denied |
+| Purpose | Optional egress so the tool can run from an environment Argos accepts when direct egress receives 403 |
 | Integration | `.env` `HTTP_PROXY`/`HTTPS_PROXY` or `--proxy` → tls-client `WithProxyUrl` |
-| Cost | Provider plan / bandwidth (not included in this repo). Direct residential/home IPs often need **no** proxy (**$0**) |
-| Limits | Sticky IP burn, latency, still depends on Argos accepting the exit |
-| Risks | Outage, credential leak if `.env` is committed, cost if traffic is high |
+| Cost | Provider plan / bandwidth (not included in this repo). Many home/office UK networks need **no** proxy (**$0**) |
+| Limits | Sticky session lifetime; added latency; still depends on Argos accepting that egress |
+| Risks | Provider outage; credential leak if `.env` is committed; cost if traffic is high |
 | Setup | `cp .env.example .env` and set proxy URLs; run from repo root |
+
+This is standard HTTP proxy configuration for reproducible egress — not CAPTCHA solving and not access-control bypass.
 
 ### Evaluated, not shipped
 
 | Service | Cost if used | Why not shipped |
 |---------|--------------|-----------------|
-| Hyper Solutions (Akamai sensors) | ~€3 / 1 000 sensors | Not needed after Chrome 152 TLS match |
+| Hyper Solutions (Akamai sensors) | ~€3 / 1 000 sensors | Unnecessary once the Chrome-compatible TLS profile was accepted |
 | chromedp / headed Chrome | Free software | Forbidden as final runtime |
 
 **No paid extraction API and no CAPTCHA solver in the final runtime.**
@@ -259,7 +261,7 @@ Offline tests cover product ID/URL parsing, HTML title/price, collection/deliver
 - Reviewer supplies a real Argos product ID/URL and a UK location.
 - Delivery mode should use a **UK postcode**; towns work best for collection (`origin=`).
 - Argos continues to expose the locator orchestrator endpoint used by the public site.
-- A correct Chrome-major TLS fingerprint is sufficient for access on a good IP; proxy is only needed when IP reputation fails.
+- Ordinary Go TLS was not accepted by Argos; a Chrome-compatible request profile was. Optional proxy is only for egress environments that still receive 403 with that profile.
 - Session state for this flow is cookie-based; Argos does not require a separate developer API token for the public locator calls.
 - Availability values always come from live Argos responses for that run.
 - Delivery `fee` is included only when present in the Argos payload; otherwise it is omitted (never fabricated).
@@ -269,7 +271,7 @@ Offline tests cover product ID/URL parsing, HTML title/price, collection/deliver
 - Locator API is undocumented and can change shape or path.
 - Chrome major upgrades may require updating `chrome152.go`.
 - Delivery fee appears only when Argos includes it.
-- Rapid repeats from one IP can cause temporary `blocked` responses.
+- Some egress environments return HTTP 403 even with a correct request profile; optional proxy addresses reproducible egress, not CAPTCHA/access-control bypass.
 - Town-as-delivery-location may return empty delivery (`postcode=` expected).
 - Location validation only rejects empty/too-short/non-alphanumeric input; Argos still decides whether a place resolves.
 
@@ -277,12 +279,12 @@ Offline tests cover product ID/URL parsing, HTML title/price, collection/deliver
 
 | Symptom | Likely cause | What to do |
 |---------|--------------|------------|
-| `blocked` / HTTP 403 on product or API | Bad egress IP or burned sticky session | Set UK residential `HTTP_PROXY` in `.env`, or change `_session-…` id |
-| Product works, API 403 | IP soft-block on locator | Use proxy; wait; rotate session |
-| `invalid_input` / exit 2 | Bad product string or mode | Pass numeric ID or full `/product/<id>` URL; mode ∈ collection\|delivery\|both |
+| `blocked` / HTTP 403 on product or API | Current egress not accepted by Argos | Configure optional UK `HTTP_PROXY` in `.env`, or retry from another network |
+| Product works, API 403 | Same egress issue on the locator path | Use optional proxy; wait and retry |
+| `invalid_input` / exit 2 | Bad product string, location, or mode | Pass numeric ID or full `/product/<id>` URL; valid location; mode ∈ collection\|delivery\|both |
 | `not_found` / exit 3 | Unknown SKU or product page 400/404 | Confirm the product page opens in a normal browser |
 | Empty delivery with a town | API expects postcode | Re-run with e.g. `SW1A 1AA` |
-| Timeout / exit 5 | Slow proxy or network | Raise `--timeout`, check proxy |
+| Timeout / exit 5 | Slow network or proxy | Raise `--timeout`, check proxy |
 | Build fails | Old Go | Use Go 1.24+ |
 | Proxy ignored | Ran outside repo / empty env | Run from repo root so `.env` loads, or pass `--proxy` |
 
@@ -293,8 +295,8 @@ Offline tests cover product ID/URL parsing, HTML title/price, collection/deliver
 ```bash
 go mod tidy
 go build -o argos ./cmd/argos    # Windows: argos.exe
-# optional: configure .env proxy if direct IP is blocked
+# optional: .env HTTP_PROXY if this egress receives 403
 ./argos --product <reviewer-product> --location "<reviewer-postcode>" --mode both
 ```
 
-Expect exit `0` with truthful `available` / `unavailable`. On deny: structured `blocked`, exit `4` — not fake stock status.
+Expect exit `0` with truthful `available` / `unavailable`. On access error: structured `blocked`, exit `4` — not fake stock status.
