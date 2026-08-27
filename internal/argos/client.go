@@ -79,6 +79,9 @@ func (c *Client) do(ctx context.Context, req *http.Request) (*http.Response, err
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if req.Context() != ctx {
+		req = req.WithContext(ctx)
+	}
 	client, err := c.ensureHTTP()
 	if err != nil {
 		return nil, err
@@ -110,7 +113,7 @@ func (c *Client) FetchProduct(ctx context.Context, productID string) (ProductInf
 
 func (c *Client) loadProductPage(ctx context.Context, productID string) (string, error) {
 	productURL := ProductURL(productID)
-	req, err := http.NewRequest("GET", productURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", productURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("build product request: %w", err)
 	}
@@ -130,8 +133,8 @@ func (c *Client) loadProductPage(ctx context.Context, productID string) (string,
 	if resp.StatusCode == 403 || (strings.Contains(html, "Access Denied") && len(html) < 8000) {
 		return "", fmt.Errorf("blocked: access denied to product page")
 	}
-	if resp.StatusCode == 404 {
-		return "", fmt.Errorf("not found: product page returned 404")
+	if resp.StatusCode == 404 || resp.StatusCode == 400 {
+		return "", fmt.Errorf("not found: product page returned %d", resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("product page HTTP %d: %s", resp.StatusCode, truncate(html, 180))
@@ -180,7 +183,7 @@ func (c *Client) fetchAvailability(ctx context.Context, productID, pathAndQuery 
 	}
 
 	apiURL := BaseURL + pathAndQuery
-	req, err := http.NewRequest("GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build availability request: %w", err)
 	}

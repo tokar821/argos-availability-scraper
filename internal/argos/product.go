@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -43,6 +44,27 @@ func ResolveProductID(input string) (string, error) {
 
 func ProductURL(productID string) string {
 	return BaseURL + "/product/" + productID
+}
+
+func ValidateLocation(location string) error {
+	location = strings.TrimSpace(location)
+	if location == "" {
+		return fmt.Errorf("invalid location: empty")
+	}
+	if len([]rune(location)) < 2 {
+		return fmt.Errorf("invalid location: too short")
+	}
+	hasAlnum := false
+	for _, r := range location {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			hasAlnum = true
+			break
+		}
+	}
+	if !hasAlnum {
+		return fmt.Errorf("invalid location: %q (expected UK postcode or town)", location)
+	}
+	return nil
 }
 
 func ParseProductHTML(html, productID string) (ProductInfo, error) {

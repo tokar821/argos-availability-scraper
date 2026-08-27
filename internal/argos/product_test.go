@@ -34,6 +34,21 @@ func TestResolveProductID(t *testing.T) {
 	}
 }
 
+func TestValidateLocation(t *testing.T) {
+	ok := []string{"M1 1AE", "London", "SW1A1AA", "EH1"}
+	for _, loc := range ok {
+		if err := argos.ValidateLocation(loc); err != nil {
+			t.Fatalf("%q: %v", loc, err)
+		}
+	}
+	bad := []string{"", " ", "!", "??", "a"}
+	for _, loc := range bad {
+		if err := argos.ValidateLocation(loc); err == nil {
+			t.Fatalf("%q: expected error", loc)
+		}
+	}
+}
+
 func TestParseProductHTML(t *testing.T) {
 	html := `<html><head>
 <script type="application/ld+json">{"@type":"Product","name":"Example Product","offers":{"price":"19.99"}}</script>

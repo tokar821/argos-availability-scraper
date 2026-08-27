@@ -119,6 +119,9 @@ func ParseDeliveryPayload(raw json.RawMessage) ([]DeliveryEntry, error) {
 	}
 	var one DeliveryEntry
 	if err := json.Unmarshal(raw, &one); err == nil {
+		if one.Postcode == "" && len(one.Availability) == 0 && len(one.Messages) == 0 && one.Fee == nil && one.Cost == nil && one.DeliveryFee == nil {
+			return nil, fmt.Errorf("unexpected delivery payload: %s", truncate(string(raw), 120))
+		}
 		return []DeliveryEntry{one}, nil
 	}
 	return nil, fmt.Errorf("unexpected delivery payload: %s", truncate(string(raw), 120))

@@ -64,6 +64,10 @@ func run() int {
 		writeFailure(*product, *location, *mode, err)
 		return 2
 	}
+	if err := argos.ValidateLocation(*location); err != nil {
+		writeFailure(productID, *location, *mode, err)
+		return 2
+	}
 
 	client := argos.NewClient()
 	client.Timeout = *timeout

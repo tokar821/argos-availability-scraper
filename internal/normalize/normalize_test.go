@@ -132,6 +132,39 @@ func TestNormalizeDeliveryEmpty(t *testing.T) {
 	}
 }
 
+func TestNormalizeDeliveryMalformed(t *testing.T) {
+	resp := &argos.AvailabilityResponse{Delivery: json.RawMessage(`{"nope":true}`)}
+	out := normalize.NormalizeDelivery(testProductID, resp, nil)
+	if out.Status != "error" || out.Error == nil || out.Error.Code != "parse_error" {
+		t.Fatalf("got %#v", out)
+	}
+}
+
+func TestNormalizeDeliveryMissingFee(t *testing.T) {
+	raw := `{
+  "delivery": [{
+    "postcode": "AB1 2CD",
+    "messages": {"12345678": {"text": "Next day delivery available"}},
+    "availability": [{
+      "sku": "12345678",
+      "quantityAvailable": 5,
+      "customerAvailableBy": "2026-08-28T23:00:00Z"
+    }]
+  }]
+}`
+	var resp argos.AvailabilityResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatal(err)
+	}
+	out := normalize.NormalizeDelivery(testProductID, &resp, nil)
+	if out.Status != "available" {
+		t.Fatalf("status=%s", out.Status)
+	}
+	if out.Fee != nil {
+		t.Fatalf("fee should be omitted, got %#v", out.Fee)
+	}
+}
+
 func TestBuildResult(t *testing.T) {
 	price := 19.99
 	product := argos.ProductInfo{

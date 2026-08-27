@@ -262,6 +262,7 @@ Offline tests cover product ID/URL parsing, HTML title/price, collection/deliver
 - A correct Chrome-major TLS fingerprint is sufficient for access on a good IP; proxy is only needed when IP reputation fails.
 - Session state for this flow is cookie-based; Argos does not require a separate developer API token for the public locator calls.
 - Availability values always come from live Argos responses for that run.
+- Delivery `fee` is included only when present in the Argos payload; otherwise it is omitted (never fabricated).
 
 ## Known limitations
 
@@ -270,6 +271,7 @@ Offline tests cover product ID/URL parsing, HTML title/price, collection/deliver
 - Delivery fee appears only when Argos includes it.
 - Rapid repeats from one IP can cause temporary `blocked` responses.
 - Town-as-delivery-location may return empty delivery (`postcode=` expected).
+- Location validation only rejects empty/too-short/non-alphanumeric input; Argos still decides whether a place resolves.
 
 ## Troubleshooting
 
@@ -278,7 +280,7 @@ Offline tests cover product ID/URL parsing, HTML title/price, collection/deliver
 | `blocked` / HTTP 403 on product or API | Bad egress IP or burned sticky session | Set UK residential `HTTP_PROXY` in `.env`, or change `_session-…` id |
 | Product works, API 403 | IP soft-block on locator | Use proxy; wait; rotate session |
 | `invalid_input` / exit 2 | Bad product string or mode | Pass numeric ID or full `/product/<id>` URL; mode ∈ collection\|delivery\|both |
-| `not_found` / exit 3 | Unknown SKU | Confirm the product page opens in a normal browser |
+| `not_found` / exit 3 | Unknown SKU or product page 400/404 | Confirm the product page opens in a normal browser |
 | Empty delivery with a town | API expects postcode | Re-run with e.g. `SW1A 1AA` |
 | Timeout / exit 5 | Slow proxy or network | Raise `--timeout`, check proxy |
 | Build fails | Old Go | Use Go 1.24+ |
