@@ -4,6 +4,10 @@
 *.exe
 *.test
 
+# Secrets / local env
+.env
+.env.local
+
 # Chrome / probe scratch
 _chrome_dump/
 _probe_*.py

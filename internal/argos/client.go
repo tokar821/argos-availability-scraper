@@ -4,142 +4,154 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/runtime"
-	"github.com/chromedp/chromedp"
+	http "github.com/bogdanfinn/fhttp"
+	tls_client "github.com/bogdanfinn/tls-client"
 )
 
 type Client struct {
-	Timeout     time.Duration
-	Headless    bool
-	ChromePath  string
-	UserDataDir string
+	Timeout  time.Duration
+	ProxyURL string // optional; falls back to HTTP_PROXY / HTTPS_PROXY
 
-	mu          sync.Mutex
-	ownProfile  bool
-	allocCtx   context.Context
-	allocCancel context.CancelFunc
-	browserCtx context.Context
-	browserCancel context.CancelFunc
+	mu           sync.Mutex
+	httpClient   tls_client.HttpClient
+	warmedProduct string
 }
 
 func NewClient() *Client {
 	return &Client{
-		Timeout:  60 * time.Second,
-		Headless: false,
+		Timeout: 60 * time.Second,
 	}
 }
 
 func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.browserCancel != nil {
-		c.browserCancel()
-		c.browserCancel = nil
-	}
-	if c.allocCancel != nil {
-		c.allocCancel()
-		c.allocCancel = nil
-	}
-	if c.ownProfile && c.UserDataDir != "" {
-		_ = os.RemoveAll(c.UserDataDir)
-		c.UserDataDir = ""
-		c.ownProfile = false
-	}
+	c.httpClient = nil
+	c.warmedProduct = ""
 }
 
-func (c *Client) ensureBrowser(parent context.Context) (context.Context, error) {
+func (c *Client) ensureHTTP() (tls_client.HttpClient, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.browserCtx != nil {
-		return c.browserCtx, nil
+	if c.httpClient != nil {
+		return c.httpClient, nil
 	}
 
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", c.Headless),
-		chromedp.Flag("disable-gpu", false),
-		chromedp.Flag("enable-automation", false),
-		chromedp.Flag("disable-blink-features", "AutomationControlled"),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("no-default-browser-check", true),
-		chromedp.WindowSize(1280, 900),
-		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"),
-	)
-	if c.ChromePath != "" {
-		opts = append(opts, chromedp.ExecPath(c.ChromePath))
-	}
-	if c.UserDataDir != "" {
-		opts = append(opts, chromedp.UserDataDir(c.UserDataDir))
-	} else {
-		dir, err := os.MkdirTemp("", "argos-chrome-*")
-		if err != nil {
-			return nil, fmt.Errorf("create chrome profile dir: %w", err)
-		}
-		c.UserDataDir = dir
-		c.ownProfile = true
-		opts = append(opts, chromedp.UserDataDir(dir))
+	timeoutSec := int(c.Timeout.Seconds())
+	if timeoutSec <= 0 {
+		timeoutSec = 60
 	}
 
-	allocCtx, allocCancel := chromedp.NewExecAllocator(parent, opts...)
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	c.allocCtx = allocCtx
-	c.allocCancel = allocCancel
-	c.browserCtx = browserCtx
-	c.browserCancel = browserCancel
-
-	if err := chromedp.Run(browserCtx); err != nil {
-		browserCancel()
-		allocCancel()
-		c.browserCtx = nil
-		return nil, fmt.Errorf("start chrome: %w", err)
+	opts := []tls_client.HttpClientOption{
+		tls_client.WithClientProfile(chrome152Profile()),
+		tls_client.WithTimeoutSeconds(timeoutSec),
+		tls_client.WithCookieJar(tls_client.NewCookieJar()),
+		tls_client.WithDisableHttp3(),
+		tls_client.WithRandomTLSExtensionOrder(),
 	}
-	return c.browserCtx, nil
+	proxy := strings.TrimSpace(c.ProxyURL)
+	if proxy == "" {
+		proxy = strings.TrimSpace(os.Getenv("HTTPS_PROXY"))
+	}
+	if proxy == "" {
+		proxy = strings.TrimSpace(os.Getenv("HTTP_PROXY"))
+	}
+	if proxy != "" {
+		opts = append(opts, tls_client.WithProxyUrl(proxy))
+	}
+
+	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
+	if err != nil {
+		return nil, fmt.Errorf("create tls client: %w", err)
+	}
+	c.httpClient = client
+	return c.httpClient, nil
+}
+
+func (c *Client) do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	client, err := c.ensureHTTP()
+	if err != nil {
+		return nil, err
+	}
+	type result struct {
+		resp *http.Response
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		resp, err := client.Do(req)
+		ch <- result{resp, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case r := <-ch:
+		return r.resp, r.err
+	}
 }
 
 func (c *Client) FetchProduct(ctx context.Context, productID string) (ProductInfo, error) {
-	browserCtx, err := c.ensureBrowser(ctx)
+	html, err := c.loadProductPage(ctx, productID)
 	if err != nil {
 		return ProductInfo{}, err
 	}
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-	runCtx, cancel := context.WithTimeout(browserCtx, timeout)
-	defer cancel()
+	return ParseProductHTML(html, productID)
+}
 
+func (c *Client) loadProductPage(ctx context.Context, productID string) (string, error) {
 	productURL := ProductURL(productID)
-	var html string
-	var title string
-	err = chromedp.Run(runCtx,
-		chromedp.Navigate(productURL),
-		chromedp.WaitReady("body", chromedp.ByQuery),
-		chromedp.Sleep(1500*time.Millisecond),
-		chromedp.Title(&title),
-		chromedp.OuterHTML("html", &html, chromedp.ByQuery),
-	)
+	req, err := http.NewRequest("GET", productURL, nil)
 	if err != nil {
-		return ProductInfo{}, fmt.Errorf("load product page: %w", err)
+		return "", fmt.Errorf("build product request: %w", err)
 	}
-	if strings.EqualFold(strings.TrimSpace(title), "Access Denied") || strings.Contains(html, "Access Denied") && len(html) < 5000 {
-		return ProductInfo{}, fmt.Errorf("blocked: access denied to product page")
-	}
-	info, err := ParseProductHTML(html, productID)
+	req.Header = navigateHeaders()
+
+	resp, err := c.do(ctx, req)
 	if err != nil {
-		if info.Title == "" && title != "" && !strings.EqualFold(title, "Access Denied") {
-			info.Title = cleanTitle(title)
-			info.ID = productID
-			info.URL = productURL
-			return info, nil
-		}
-		return info, err
+		return "", fmt.Errorf("load product page: %w", err)
 	}
-	return info, nil
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read product page: %w", err)
+	}
+	html := string(body)
+
+	if resp.StatusCode == 403 || (strings.Contains(html, "Access Denied") && len(html) < 8000) {
+		return "", fmt.Errorf("blocked: access denied to product page")
+	}
+	if resp.StatusCode == 404 {
+		return "", fmt.Errorf("not found: product page returned 404")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("product page HTTP %d: %s", resp.StatusCode, truncate(html, 180))
+	}
+
+	c.mu.Lock()
+	c.warmedProduct = productID
+	c.mu.Unlock()
+	return html, nil
+}
+
+func (c *Client) warmSession(ctx context.Context, productID string) error {
+	c.mu.Lock()
+	warmed := c.warmedProduct == productID
+	c.mu.Unlock()
+	if warmed {
+		return nil
+	}
+	_, err := c.loadProductPage(ctx, productID)
+	return err
 }
 
 func (c *Client) FetchCollection(ctx context.Context, productID, location string) (*AvailabilityResponse, error) {
@@ -163,74 +175,41 @@ func (c *Client) FetchDelivery(ctx context.Context, productID, location string) 
 }
 
 func (c *Client) fetchAvailability(ctx context.Context, productID, pathAndQuery string) (*AvailabilityResponse, error) {
-	browserCtx, err := c.ensureBrowser(ctx)
-	if err != nil {
+	if err := c.warmSession(ctx, productID); err != nil {
 		return nil, err
 	}
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-	runCtx, cancel := context.WithTimeout(browserCtx, timeout)
-	defer cancel()
 
-	productURL := ProductURL(productID)
-	var href string
-	_ = chromedp.Run(runCtx, chromedp.Location(&href))
-	if !strings.Contains(href, "/product/"+productID) {
-		err = chromedp.Run(runCtx,
-			chromedp.Navigate(productURL),
-			chromedp.WaitReady("body", chromedp.ByQuery),
-			chromedp.Sleep(800*time.Millisecond),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("navigate before availability fetch: %w", err)
-		}
-	}
-
-	js := fmt.Sprintf(`(async () => {
-  const url = %q;
-  const res = await fetch(url, {
-    method: 'GET',
-    credentials: 'include',
-    headers: {
-      'accept': 'application/json,*/*',
-      'content-type': 'application/json',
-      'x-newrelic-id': 'VQEPU15SARAGV1hVDgMBUVY='
-    }
-  });
-  const text = await res.text();
-  return JSON.stringify({ status: res.status, body: text });
-})()`, pathAndQuery)
-
-	var raw string
-	err = chromedp.Run(runCtx, chromedp.Evaluate(js, &raw, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
-		return p.WithAwaitPromise(true)
-	}))
+	apiURL := BaseURL + pathAndQuery
+	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("availability fetch evaluate: %w", err)
+		return nil, fmt.Errorf("build availability request: %w", err)
 	}
+	req.Header = apiHeaders(ProductURL(productID))
 
-	var wrap struct {
-		Status int    `json:"status"`
-		Body   string `json:"body"`
+	resp, err := c.do(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("availability request: %w", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &wrap); err != nil {
-		return nil, fmt.Errorf("decode fetch wrapper: %w (raw=%s)", err, truncate(raw, 180))
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read availability response: %w", err)
 	}
-	if wrap.Status == 403 || strings.Contains(wrap.Body, "Access Denied") {
-		return nil, fmt.Errorf("blocked: availability API access denied (HTTP %d)", wrap.Status)
+	text := string(body)
+
+	if resp.StatusCode == 403 || strings.Contains(text, "Access Denied") {
+		return nil, fmt.Errorf("blocked: availability API access denied (HTTP %d)", resp.StatusCode)
 	}
-	if wrap.Status == 404 {
+	if resp.StatusCode == 404 {
 		return nil, fmt.Errorf("not found: availability API returned 404")
 	}
-	if wrap.Status < 200 || wrap.Status >= 300 {
-		return nil, fmt.Errorf("availability API HTTP %d: %s", wrap.Status, truncate(wrap.Body, 180))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("availability API HTTP %d: %s", resp.StatusCode, truncate(text, 180))
 	}
 
-	var resp AvailabilityResponse
-	if err := json.Unmarshal([]byte(wrap.Body), &resp); err != nil {
+	var out AvailabilityResponse
+	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("parse availability JSON: %w", err)
 	}
-	return &resp, nil
+	return &out, nil
 }

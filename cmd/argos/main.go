@@ -25,9 +25,8 @@ func run() int {
 		mode      = flag.String("mode", "both", "collection | delivery | both")
 		jsonOut   = flag.Bool("json", true, "print normalized JSON (default true)")
 		quiet     = flag.Bool("quiet", false, "suppress human-readable console summary")
-		timeout   = flag.Duration("timeout", 75*time.Second, "per-request timeout")
-		headless  = flag.Bool("headless", false, "run Chromium headless (often returns access denied in testing)")
-		chromePath = flag.String("chrome", "", "optional path to chrome/msedge executable")
+		timeout = flag.Duration("timeout", 75*time.Second, "per-request timeout")
+		proxy   = flag.String("proxy", "", "optional HTTP(S) proxy URL (else HTTP_PROXY / HTTPS_PROXY)")
 	)
 	flag.Parse()
 
@@ -66,8 +65,7 @@ func run() int {
 
 	client := argos.NewClient()
 	client.Timeout = *timeout
-	client.Headless = *headless
-	client.ChromePath = *chromePath
+	client.ProxyURL = strings.TrimSpace(*proxy)
 	defer client.Close()
 
 	runBudget := *timeout

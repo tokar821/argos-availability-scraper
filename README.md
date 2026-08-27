@@ -60,9 +60,8 @@ Example:
 | `--mode` | `both` | `collection`, `delivery`, or `both` |
 | `--json` | `true` | Print JSON to stdout |
 | `--quiet` | `false` | Suppress stderr summary |
-| `--timeout` | `75s` | Per-request timeout for each Chrome operation |
-| `--headless` | `false` | Headless Chromium (often returns access denied in testing) |
-| `--chrome` | | Optional path to Chrome/Edge binary |
+| `--timeout` | `75s` | Per-request timeout |
+| `--proxy` | | Optional HTTP(S) proxy URL (else `HTTP_PROXY` / `HTTPS_PROXY`) |
 
 ---
 
@@ -106,27 +105,24 @@ Failures return structured JSON — never silent errors or fabricated availabili
 
 Exit codes are intended for scripting and CI integration; the JSON `error` object provides the detailed failure reason.
 
-If Argos does not permit the browser session or API call, the program returns a structured `blocked` error rather than attempting to work around the protection.
+If Argos does not permit the TLS session or API call, the program returns a structured `blocked` error rather than attempting to work around the protection.
 
 ---
 
 ## Approach
 
-Direct `net/http` and curl requests to Argos returned `403 Access Denied` in the target environment during development.
+Plain Go `net/http` requests to Argos returned `403 Access Denied` because Akamai fingerprints TLS (JA4). Stock browser profiles in tls-client (through Chrome 146) also mismatched real Chrome 152.
 
-This tool therefore uses a **standard headed Chromium instance** (via [chromedp](https://github.com/chromedp/chromedp)) **without stealth or fingerprint-evasion modifications** to:
+This tool uses **direct programmatic HTTPS** via [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) with a **custom Chrome 152 ClientHello** (ML-DSA signature schemes + trust_anchors) that matches the local Chrome JA4, then:
 
-1. Load the public Argos product page in headed Chromium
-2. Perform availability requests from that page context via in-page `fetch()` against Argos's first-party JSON endpoint
-
-The public Argos page itself uses browser-context requests to obtain availability data. This tool uses the same page context for those first-party requests — it does not claim to defeat site protection; it operates in the environment in which the public website already functions.
+1. GETs the public Argos product page (cookie jar)
+2. GETs Argos's first-party availability JSON with Chrome-like headers
 
 It does **not**:
 
-- Automate the UI (no typing a postcode, clicking Check, or scraping the modal)
+- Automate a browser UI
 - Solve CAPTCHAs
 - Bypass authentication
-- Use stealth or fingerprint-evasion techniques
 - Route through a paid extraction or bypass service
 
 If the session is blocked, the program reports a structured failure.
@@ -134,12 +130,10 @@ If the session is blocked, the program reports a structured failure.
 ### Architecture
 
 ```
-              Chromium
-                 │
-       public Argos page context
+     tls-client (Chrome 152 JA4)
                  │
                  ▼
-       Argos first-party API
+       Argos first-party HTTP
                  │
           ┌──────┴──────┐
           ▼             ▼
@@ -154,12 +148,10 @@ If the session is blocked, the program reports a structured failure.
           Stable JSON model
 ```
 
-This is **not** a Playwright-style flow of type postcode → click button → scrape modal text. The data comes from the same first-party API the Argos page uses.
-
 | Package | Responsibility |
 |---------|----------------|
 | `cmd/argos` | CLI, orchestration, output, exit codes |
-| `internal/argos` | Chromium session, first-party API calls, HTML parsing |
+| `internal/argos` | Chrome-152 TLS HTTP client, first-party API calls, HTML parsing |
 | `internal/normalize` | Raw Argos JSON → stable output schema |
 | `internal/model` | Output types (decoupled from Argos API shapes) |
 
@@ -188,12 +180,11 @@ Both modes also pass `skuQty=<product-id>_1` (and related locator params observe
 
 | Decision | Reason |
 |----------|--------|
-| Chromium-backed API client over plain HTTP | Direct HTTP returned 403 in the target environment; the public Argos page uses browser-context requests for availability — this tool uses the same page context |
+| Custom Chrome 152 TLS profile over stock `net/http` | Plain TLS / older Chrome profiles JA4-mismatch Chrome 152 and get 403 |
 | First-party API calls over UI automation | Same data source, faster and more stable |
-| Headed over headless Chromium | Headless sessions often receive access denied in testing |
 | Separate `normalize` package | Keeps Argos API shapes out of the output contract |
 | Run-level timeout | When mode is `both`, steps run sequentially (product page → collection → delivery) with an overall context timeout of `3×` `--timeout` (e.g. 225s at default 75s). Each step also has its own per-request timeout. |
-| Structured `blocked` errors | No CAPTCHA solving, stealth, or circumvention when access is denied |
+| Structured `blocked` errors | No CAPTCHA solving or circumvention when access is denied |
 
 ---
 
@@ -216,11 +207,11 @@ Fixtures are synthetic JSON/HTML embedded in test files. They are not used at ru
 
 ## Limitations
 
-- Chromium must be installed on the host machine (headed mode by default).
 - Delivery availability is queried using Argos's `postcode=` parameter. A UK postcode should be supplied for delivery checks; a town name may produce no delivery result because the underlying API expects a delivery postcode.
 - Delivery fee is included only when Argos returns it in the API response.
 - The availability endpoint is undocumented and may change; the program depends on Argos's current website behaviour.
-- Repeated rapid requests may cause temporary access denial; wait and retry on a normal desktop network.
+- Chrome major-version drift can break the JA4 match; the ClientHello in `internal/argos/chrome152.go` may need updating when Chrome adds new TLS features.
+- Optional residential proxy (`--proxy` / `HTTP_PROXY`) can help on datacenter IPs; not required when the TLS fingerprint already matches.
 
 ---
 
@@ -232,12 +223,11 @@ It does not:
 
 - solve or bypass CAPTCHAs
 - bypass authentication
-- use stealth or fingerprint-evasion tooling
 - use CAPTCHA-solving or anti-bot services
 - use paid extraction APIs
 - rotate credentials or otherwise circumvent access restrictions
 
-If Argos denies access to the browser session or availability request, the scraper returns a structured `blocked` error.
+If Argos denies access to the TLS session or availability request, the scraper returns a structured `blocked` error.
 
 ---
 
@@ -245,8 +235,8 @@ If Argos denies access to the browser session or availability request, the scrap
 
 | Dependency | Purpose |
 |------------|---------|
-| [chromedp](https://github.com/chromedp/chromedp) | Chrome DevTools Protocol (open-source) |
-| Google Chrome / Edge | Chromium browser runtime |
+| [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) | Browser-like TLS/HTTP2 client (open-source) |
+| Custom Chrome 152 profile (`internal/argos/chrome152.go`) | JA4 match for current Chrome |
 | `www.argos.co.uk` | Public product pages and first-party availability API |
 
 No paid extraction APIs, CAPTCHA solvers, or third-party bypass services are used.
