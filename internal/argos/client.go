@@ -17,7 +17,7 @@ import (
 
 type Client struct {
 	Timeout  time.Duration
-	ProxyURL string // optional; falls back to HTTP_PROXY / HTTPS_PROXY
+	ProxyURL string
 
 	mu           sync.Mutex
 	httpClient   tls_client.HttpClient

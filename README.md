@@ -1,24 +1,33 @@
 # Argos Collection & Delivery Scraper
 
-Go CLI that queries Argos at runtime for live product fulfilment availability, including collection and home delivery, for a supplied UK postcode or town.
+Go CLI that retrieves **live** Argos collection and home-delivery availability for a UK postcode or town using **programmatic HTTPS only** (no browser automation).
 
-This is a **Chromium-backed Argos API client**: the tool loads the public Argos page in headed Chromium and performs availability requests from that page context via Argos's first-party JSON endpoint.
+Runtime: custom Chrome 152 TLS/HTTP2 profile ([bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client)), cookie-jar session, Chrome-like headers, optional HTTP(S) proxy via `.env` / `--proxy`.
 
 ---
 
-## Prerequisites
+## Requirements
 
-- Go 1.22+
-- Google Chrome, Chromium, or Microsoft Edge
-- Network access to `www.argos.co.uk`
+- Go **1.24+** (`go.mod`)
+- Network access to `https://www.argos.co.uk`
+- Optional: HTTP(S) proxy when the host egress IP is blocked (common on datacenter IPs)
+
+Chrome/Chromium is **not** required. The TLS profile is compiled into the binary.
 
 ## Installation
-
-Clone the repository and download dependencies:
 
 ```bash
 go mod download
 ```
+
+Optional local config (gitignored — never commit secrets):
+
+```bash
+cp .env.example .env
+# edit HTTP_PROXY / HTTPS_PROXY if needed
+```
+
+`.env` is loaded automatically on startup. Existing process environment variables are not overwritten.
 
 ## Build
 
@@ -30,26 +39,30 @@ go build -o argos.exe ./cmd/argos    # Windows
 
 ## Usage
 
-Accepts any Argos product ID or product URL. Product and location values are always taken from the command line — nothing is hardcoded.
+Inputs are always taken from the CLI — product IDs, locations, and availability are never hardcoded.
 
 ```bash
-# Both collection and delivery (supply a UK postcode for delivery)
+# collection + delivery (prefer a UK postcode for delivery)
 ./argos --product <product-id> --location "<postcode>" --mode both
 
-# Product URL with town (collection)
-./argos --product https://www.argos.co.uk/product/<product-id> --location "<town>" --mode collection
+# collection only (town or postcode)
+./argos --product https://www.argos.co.uk/product/<id> --location "<town>" --mode collection
 
-# Positional shorthand
+# delivery only (UK postcode)
+./argos --product <product-id> --location "<postcode>" --mode delivery
+
+# positional shorthand
 ./argos <product-id-or-url> "<location>" [mode]
 ```
 
 Example:
 
 ```bash
-./argos --product 12345678 --location "M1 1AE" --mode both
+./argos --product 7885338 --location "M1 1AE" --mode both
 ```
 
-**Output:** normalized JSON on **stdout**, human-readable summary on **stderr**.
+- **stdout** → structured JSON  
+- **stderr** → human-readable summary  
 
 ### Flags
 
@@ -61,32 +74,61 @@ Example:
 | `--json` | `true` | Print JSON to stdout |
 | `--quiet` | `false` | Suppress stderr summary |
 | `--timeout` | `75s` | Per-request timeout |
-| `--proxy` | | Optional HTTP(S) proxy URL (else `HTTP_PROXY` / `HTTPS_PROXY`) |
+| `--proxy` | | HTTP(S) proxy URL (else `HTTP_PROXY` / `HTTPS_PROXY` / `.env`) |
+
+### Proxy setup (optional)
+
+If direct requests return `blocked` / HTTP 403 on the availability API:
+
+1. Copy `.env.example` → `.env`
+2. Set a UK residential proxy, e.g.:
+
+```env
+HTTP_PROXY=http://user:pass@proxy-host:port
+HTTPS_PROXY=http://user:pass@proxy-host:port
+```
+
+3. Rebuild is not required; run `./argos ...` again from the repo root (`.env` is auto-loaded).
+
+Or pass once:
+
+```bash
+./argos --product 7885338 --location "M1 1AE" --mode both --proxy "http://user:pass@proxy-host:port"
+```
+
+Development used BottingTools UK residential with a sticky session in the username. See [External Services](#external-services).
 
 ---
 
 ## Output
 
-### Response fields
+### Fields
 
 | Field | JSON key | Notes |
 |-------|----------|-------|
-| Product title | `title` | From product page JSON-LD / meta tags |
-| Product ID | `product_id` | Parsed from URL or `--product` |
-| Price | `price.amount`, `price.display` | When present on the product page |
-| Location | `location` | Value passed via `--location` |
-| Timestamp | `checked_at` | UTC (RFC3339) |
-| Collection status | `collection.status` | `available`, `unavailable`, or `error` |
-| Delivery status | `delivery.status` | Same values |
-| Store name / distance | `collection.stores[]` | When collection is checked |
-| Earliest window | `*.earliest_date`, `*.earliest_window` | When Argos provides them |
-| Delivery fee | `delivery.fee` | When the API includes it |
+| Product title | `title` | Product page JSON-LD / meta |
+| Product ID | `product_id` | From URL or `--product` |
+| Price | `price` | `null` if Argos does not expose it |
+| Location | `location` | Echo of `--location` |
+| Timestamp | `checked_at` | UTC RFC3339 |
+| Collection | `collection` | Present when mode includes collection |
+| Delivery | `delivery` | Present when mode includes delivery |
 
-A full example is in [`samples/sample_output.json`](samples/sample_output.json). The sample was captured from a real Argos request during development; availability values are not hardcoded into the application.
+**Collection** (when Argos provides data): `status`, `message`, `earliest_date`, `earliest_window`, `stores[]` (`name`, `distance_miles`, …).
+
+**Delivery** (when Argos provides data): `status`, `message`, `earliest_date`, `earliest_window`, `fee`.
+
+Optional fields are omitted or `null` when Argos does not return them — never fabricated.
+
+Status values: `available` | `unavailable` | `unknown` | `error`.  
+A transport/session failure uses `error` / top-level `error` — **not** reported as stock unavailability.
+
+### Examples
+
+- Live JSON sample: [`samples/sample_output.json`](samples/sample_output.json)
+- Console-style sample: [`samples/sample_run_stderr.txt`](samples/sample_run_stderr.txt)
 
 ### Errors
-
-Failures return structured JSON — never silent errors or fabricated availability:
 
 ```json
 {
@@ -94,149 +136,163 @@ Failures return structured JSON — never silent errors or fabricated availabili
 }
 ```
 
-| Exit code | Meaning |
-|-----------|---------|
+| Exit | Meaning |
+|------|---------|
 | 0 | Success |
 | 2 | Invalid input |
 | 3 | Product not found |
-| 4 | Blocked (access denied) |
+| 4 | Blocked / access denied |
 | 5 | Timeout |
-| 1 | Other error |
-
-Exit codes are intended for scripting and CI integration; the JSON `error` object provides the detailed failure reason.
-
-If Argos does not permit the TLS session or API call, the program returns a structured `blocked` error rather than attempting to work around the protection.
+| 1 | Other request/parse error |
 
 ---
 
-## Approach
+## Architecture
 
-Plain Go `net/http` requests to Argos returned `403 Access Denied` because Akamai fingerprints TLS (JA4). Stock browser profiles in tls-client (through Chrome 146) also mismatched real Chrome 152.
-
-This tool uses **direct programmatic HTTPS** via [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) with a **custom Chrome 152 ClientHello** (ML-DSA signature schemes + trust_anchors) that matches the local Chrome JA4, then:
-
-1. GETs the public Argos product page (cookie jar)
-2. GETs Argos's first-party availability JSON with Chrome-like headers
-
-It does **not**:
-
-- Automate a browser UI
-- Solve CAPTCHAs
-- Bypass authentication
-- Route through a paid extraction or bypass service
-
-If the session is blocked, the program reports a structured failure.
-
-### Architecture
-
-```
-     tls-client (Chrome 152 JA4)
-                 │
-                 ▼
-       Argos first-party HTTP
-                 │
-          ┌──────┴──────┐
-          ▼             ▼
-      Collection     Delivery
-       origin=       postcode=
-          │             │
-          └──────┬──────┘
-                 ▼
-            Normalizer
-                 │
-                 ▼
-          Stable JSON model
+```text
+CLI / .env
+    ↓
+HTTP client (Chrome 152 TLS + cookie jar + optional proxy)
+    ↓
+Argos product page + locator API
+    ↓
+Parser / normalizer
+    ↓
+JSON (stdout) + console summary (stderr)
 ```
 
-| Package | Responsibility |
-|---------|----------------|
-| `cmd/argos` | CLI, orchestration, output, exit codes |
-| `internal/argos` | Chrome-152 TLS HTTP client, first-party API calls, HTML parsing |
-| `internal/normalize` | Raw Argos JSON → stable output schema |
-| `internal/model` | Output types (decoupled from Argos API shapes) |
+| Package | Role |
+|---------|------|
+| `cmd/argos` | Flags, `.env` load, orchestration, exit codes |
+| `internal/argos` | TLS client, product HTML, collection/delivery requests |
+| `internal/normalize` | Argos JSON → stable schema |
+| `internal/model` | Output types |
+
+### Request implementation
+
+1. Build tls-client with custom Chrome 152 ClientHello, HTTP/2 settings, cookie jar, optional proxy.
+2. `GET` product page → parse title/price; store `Set-Cookie`.
+3. `GET` `/stores/api/orchestrator/v0/locator/availability`  
+   - Collection: `origin=<location>`  
+   - Delivery: `postcode=<location>`  
+   with Chrome-like headers, cookies, and product `Referer`.
+4. Normalize live JSON; map failures to structured errors.
+
+| Concern | Handling |
+|---------|----------|
+| Sessions | One shared HTTP client + cookie jar for the process run |
+| Cookies | Automatic jar after product-page response |
+| Tokens | Session cookies from Argos `Set-Cookie` are the only credentials used; no CAPTCHA/bearer/API-key token is required for this first-party flow |
+| Headers / UA | Chrome 152 `User-Agent`, `sec-ch-ua*`, `sec-fetch-*`, API `x-newrelic-id` |
+| Redirects | Followed by the HTTP client |
+| TLS | Custom JA4-aligned profile in `internal/argos/chrome152.go` |
+| Proxy | `--proxy` or `HTTP_PROXY` / `HTTPS_PROXY` (including `.env`) |
 
 ### Availability API
 
-**Endpoint** (discovered from Argos's own network traffic in browser DevTools):
-
-```
+```text
 GET /stores/api/orchestrator/v0/locator/availability
 ```
 
-The endpoint was identified by observing network requests made by the Argos website during a normal stock-check interaction; the implementation does not invent or emulate a separate availability data source.
-
-This is Argos's internal locator orchestrator API — used by the public website but not formally documented as a public integration surface. It may change without notice. If it becomes unavailable or changes shape, the program returns a structured error rather than fabricated data.
-
-| Mode | Query param | Meaning |
-|------|-------------|---------|
-| Collection | `origin=` | Location anchor accepted by the Argos locator API; town names and postcodes are supported where Argos resolves them. The value from `--location` is passed directly as `origin`. |
-| Delivery | `postcode=` | Delivery destination. A UK postcode should be supplied; the underlying API expects a delivery postcode. |
-
-Both modes also pass `skuQty=<product-id>_1` (and related locator params observed in site traffic).
-
-**Important:** using only `origin=` returns `"delivery": null` even when home delivery exists. Delivery requires `postcode=`.
-
-### Design decisions
-
-| Decision | Reason |
-|----------|--------|
-| Custom Chrome 152 TLS profile over stock `net/http` | Plain TLS / older Chrome profiles JA4-mismatch Chrome 152 and get 403 |
-| First-party API calls over UI automation | Same data source, faster and more stable |
-| Separate `normalize` package | Keeps Argos API shapes out of the output contract |
-| Run-level timeout | When mode is `both`, steps run sequentially (product page → collection → delivery) with an overall context timeout of `3×` `--timeout` (e.g. 225s at default 75s). Each step also has its own per-request timeout. |
-| Structured `blocked` errors | No CAPTCHA solving or circumvention when access is denied |
-
----
-
-## Tests
-
-```bash
-go test ./...
-```
-
-Offline unit tests cover:
-
-- Product ID and URL parsing
-- Product HTML parsing (title, price, not-found, blocked pages)
-- Collection and delivery normalization
-- Error mapping
-
-Fixtures are synthetic JSON/HTML embedded in test files. They are not used at runtime. The fixtures only test parser and normalization behaviour; runtime availability always comes from Argos.
-
----
-
-## Limitations
-
-- Delivery availability is queried using Argos's `postcode=` parameter. A UK postcode should be supplied for delivery checks; a town name may produce no delivery result because the underlying API expects a delivery postcode.
-- Delivery fee is included only when Argos returns it in the API response.
-- The availability endpoint is undocumented and may change; the program depends on Argos's current website behaviour.
-- Chrome major-version drift can break the JA4 match; the ClientHello in `internal/argos/chrome152.go` may need updating when Chrome adds new TLS features.
-- Optional residential proxy (`--proxy` / `HTTP_PROXY`) can help on datacenter IPs; not required when the TLS fingerprint already matches.
-
----
-
-## Access & Compliance
-
-The scraper does not attempt to defeat Argos access controls.
-
-It does not:
-
-- solve or bypass CAPTCHAs
-- bypass authentication
-- use CAPTCHA-solving or anti-bot services
-- use paid extraction APIs
-- rotate credentials or otherwise circumvent access restrictions
-
-If Argos denies access to the TLS session or availability request, the scraper returns a structured `blocked` error.
+Same first-party endpoint the Argos website uses. Undocumented; may change.
 
 ---
 
 ## Dependencies
 
-| Dependency | Purpose |
-|------------|---------|
-| [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) | Browser-like TLS/HTTP2 client (open-source) |
-| Custom Chrome 152 profile (`internal/argos/chrome152.go`) | JA4 match for current Chrome |
-| `www.argos.co.uk` | Public product pages and first-party availability API |
+| Library | Purpose |
+|---------|---------|
+| `github.com/bogdanfinn/tls-client` | TLS/HTTP2 client |
+| `github.com/bogdanfinn/fhttp` | HTTP types used by tls-client |
+| `github.com/bogdanfinn/utls` | ClientHello construction |
 
-No paid extraction APIs, CAPTCHA solvers, or third-party bypass services are used.
+See `go.mod` / `go.sum` for exact versions.
+
+## External services
+
+### bogdanfinn/tls-client (required)
+
+| | |
+|--|--|
+| Purpose | Programmatic Chrome-like TLS/HTTP2 |
+| Integration | `internal/argos/client.go` + `chrome152.go` |
+| Cost | Free (open-source) |
+| Limits | Chrome TLS drift can break JA4 match |
+| Risks | Upgrade breakage; temporary Argos 403 until profile update |
+| Setup | `go mod download` |
+
+### HTTP(S) residential proxy (optional)
+
+| | |
+|--|--|
+| Provider (dev) | [BottingTools](https://bottingtools.com) UK residential (sticky session in username) |
+| Purpose | Trusted UK egress when datacenter IPs are denied |
+| Integration | `.env` `HTTP_PROXY`/`HTTPS_PROXY` or `--proxy` → tls-client `WithProxyUrl` |
+| Cost | Provider plan / bandwidth (not included in this repo). Direct residential/home IPs often need **no** proxy (**$0**) |
+| Limits | Sticky IP burn, latency, still depends on Argos accepting the exit |
+| Risks | Outage, credential leak if `.env` is committed, cost if traffic is high |
+| Setup | `cp .env.example .env` and set proxy URLs; run from repo root |
+
+### Evaluated, not shipped
+
+| Service | Cost if used | Why not shipped |
+|---------|--------------|-----------------|
+| Hyper Solutions (Akamai sensors) | ~€3 / 1 000 sensors | Not needed after Chrome 152 TLS match |
+| chromedp / headed Chrome | Free software | Forbidden as final runtime |
+
+**No paid extraction API and no CAPTCHA solver in the final runtime.**
+
+---
+
+## Testing
+
+```bash
+go test ./...
+```
+
+Offline tests cover product ID/URL parsing, HTML title/price, collection/delivery normalization, store/distance/date/fee extraction, missing optional fields, unavailable stock, malformed payloads, and error mapping. Fixtures are embedded in `*_test.go` — not used at runtime.
+
+---
+
+## Assumptions
+
+- Reviewer supplies a real Argos product ID/URL and a UK location.
+- Delivery mode should use a **UK postcode**; towns work best for collection (`origin=`).
+- Argos continues to expose the locator orchestrator endpoint used by the public site.
+- A correct Chrome-major TLS fingerprint is sufficient for access on a good IP; proxy is only needed when IP reputation fails.
+- Session state for this flow is cookie-based; Argos does not require a separate developer API token for the public locator calls.
+- Availability values always come from live Argos responses for that run.
+
+## Known limitations
+
+- Locator API is undocumented and can change shape or path.
+- Chrome major upgrades may require updating `chrome152.go`.
+- Delivery fee appears only when Argos includes it.
+- Rapid repeats from one IP can cause temporary `blocked` responses.
+- Town-as-delivery-location may return empty delivery (`postcode=` expected).
+
+## Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---------|--------------|------------|
+| `blocked` / HTTP 403 on product or API | Bad egress IP or burned sticky session | Set UK residential `HTTP_PROXY` in `.env`, or change `_session-…` id |
+| Product works, API 403 | IP soft-block on locator | Use proxy; wait; rotate session |
+| `invalid_input` / exit 2 | Bad product string or mode | Pass numeric ID or full `/product/<id>` URL; mode ∈ collection\|delivery\|both |
+| `not_found` / exit 3 | Unknown SKU | Confirm the product page opens in a normal browser |
+| Empty delivery with a town | API expects postcode | Re-run with e.g. `SW1A 1AA` |
+| Timeout / exit 5 | Slow proxy or network | Raise `--timeout`, check proxy |
+| Build fails | Old Go | Use Go 1.24+ |
+| Proxy ignored | Ran outside repo / empty env | Run from repo root so `.env` loads, or pass `--proxy` |
+
+---
+
+## Reproduce (reviewer checklist)
+
+```bash
+go mod tidy
+go build -o argos ./cmd/argos    # Windows: argos.exe
+# optional: configure .env proxy if direct IP is blocked
+./argos --product <reviewer-product> --location "<reviewer-postcode>" --mode both
+```
+
+Expect exit `0` with truthful `available` / `unavailable`. On deny: structured `blocked`, exit `4` — not fake stock status.

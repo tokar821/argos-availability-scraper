@@ -8,7 +8,8 @@
 .env
 .env.local
 
-# Chrome / probe scratch
+# Chrome / probe scratch (never submit)
+_probe/
 _chrome_dump/
 _probe_*.py
 _probe_*.html

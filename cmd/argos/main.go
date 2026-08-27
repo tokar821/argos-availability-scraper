@@ -19,14 +19,16 @@ func main() {
 }
 
 func run() int {
+	loadDotEnv(".env")
+
 	var (
-		product   = flag.String("product", "", "Argos product ID or product URL")
-		location  = flag.String("location", "", "UK postcode or town")
-		mode      = flag.String("mode", "both", "collection | delivery | both")
-		jsonOut   = flag.Bool("json", true, "print normalized JSON (default true)")
-		quiet     = flag.Bool("quiet", false, "suppress human-readable console summary")
-		timeout = flag.Duration("timeout", 75*time.Second, "per-request timeout")
-		proxy   = flag.String("proxy", "", "optional HTTP(S) proxy URL (else HTTP_PROXY / HTTPS_PROXY)")
+		product  = flag.String("product", "", "Argos product ID or product URL")
+		location = flag.String("location", "", "UK postcode or town")
+		mode     = flag.String("mode", "both", "collection | delivery | both")
+		jsonOut  = flag.Bool("json", true, "print normalized JSON (default true)")
+		quiet    = flag.Bool("quiet", false, "suppress human-readable console summary")
+		timeout  = flag.Duration("timeout", 75*time.Second, "per-request timeout")
+		proxy    = flag.String("proxy", "", "optional HTTP(S) proxy URL (else HTTP_PROXY / HTTPS_PROXY from env/.env)")
 	)
 	flag.Parse()
 

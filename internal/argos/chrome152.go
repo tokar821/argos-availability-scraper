@@ -7,7 +7,6 @@ import (
 	tls "github.com/bogdanfinn/utls"
 )
 
-// ML-DSA signature schemes advertised by Chrome 151+/152.
 const (
 	sigMLDSA44 = tls.SignatureScheme(0x0904)
 	sigMLDSA65 = tls.SignatureScheme(0x0905)
@@ -17,8 +16,6 @@ const (
 const chrome152UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 const chrome152SecCHUA = `"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"`
 
-// chrome152Profile matches real Chrome 152 JA4 (t13d1517h2_8daaf6152771_cb7bf5808d99),
-// including ML-DSA sigs and trust_anchors that stock tls-client Chrome_146 lacks.
 func chrome152Profile() profiles.ClientProfile {
 	helloID := tls.ClientHelloID{
 		Client:               "Chrome",
@@ -70,7 +67,7 @@ func chrome152Profile() profiles.ClientProfile {
 					&tls.RenegotiationInfoExtension{Renegotiation: tls.RenegotiateOnceAsClient},
 					&tls.ALPNExtension{AlpnProtocols: []string{"h2", "http/1.1"}},
 					&tls.UtlsCompressCertExtension{Algorithms: []tls.CertCompressionAlgo{tls.CertCompressionBrotli}},
-					&tls.GenericExtension{Id: 0xca34, Data: []byte{0x00, 0x00}}, // trust_anchors
+					&tls.GenericExtension{Id: 0xca34, Data: []byte{0x00, 0x00}},
 					&tls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: []tls.SignatureScheme{
 						tls.SignatureScheme(tls.GREASE_PLACEHOLDER),
 						sigMLDSA44,
