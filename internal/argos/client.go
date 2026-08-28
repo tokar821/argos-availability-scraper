@@ -16,11 +16,13 @@ import (
 )
 
 type Client struct {
-	Timeout  time.Duration
-	ProxyURL string
+	Timeout    time.Duration
+	ProxyURL   string
+	forceHTTP1 bool
 
-	mu           sync.Mutex
-	httpClient   tls_client.HttpClient
+	mu            sync.Mutex
+	httpClient    tls_client.HttpClient
+	cookieJar     tls_client.CookieJar
 	warmedProduct string
 }
 
@@ -34,6 +36,7 @@ func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.httpClient = nil
+	c.cookieJar = nil
 	c.warmedProduct = ""
 }
 
@@ -48,13 +51,19 @@ func (c *Client) ensureHTTP() (tls_client.HttpClient, error) {
 	if timeoutSec <= 0 {
 		timeoutSec = 60
 	}
+	if c.cookieJar == nil {
+		c.cookieJar = tls_client.NewCookieJar()
+	}
 
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithClientProfile(chrome152Profile()),
 		tls_client.WithTimeoutSeconds(timeoutSec),
-		tls_client.WithCookieJar(tls_client.NewCookieJar()),
+		tls_client.WithCookieJar(c.cookieJar),
 		tls_client.WithDisableHttp3(),
 		tls_client.WithRandomTLSExtensionOrder(),
+	}
+	if c.forceHTTP1 {
+		opts = append(opts, tls_client.WithForceHttp1())
 	}
 	proxy := strings.TrimSpace(c.ProxyURL)
 	if proxy == "" {

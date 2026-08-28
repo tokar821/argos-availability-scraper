@@ -96,7 +96,56 @@ Or pass once:
 ./argos --product 7885338 --location "M1 1AE" --mode both --proxy "http://user:pass@proxy-host:port"
 ```
 
-Development used BottingTools UK residential with a sticky session in the username. See [External Services](#external-services).
+Development used OneStopProxies UK with a sticky session in the username. See [External Services](#external-services).
+
+---
+
+## Checkout (Akamai-protected basket API)
+
+Programmatic **add to cart → postcode → delivery checkout** — the flow behind **Continue with delivery** on the basket page.
+
+```bash
+./argos checkout --product 7885338 --postcode "M1 1AE"
+# shorthand
+./argos checkout 4017068 "M1 1AE"
+```
+
+Requires `.env` (or environment):
+
+```env
+HTTP_PROXY=...          # UK sticky proxy (required on many egress paths)
+HYPER_API_KEY=...       # Hyper Solutions — solves Akamai adaptive SEC-CPT (HTTP 428) on checkout
+```
+
+**Flow (matches browser HAR):**
+
+1. `POST basket-api/v1/basket/items` — add product  
+2. `POST basket-api/v2/basket:localise` — postcode + fulfilment (`deliverTo`, `fulfilmentType`)  
+3. `POST basket-api/v3/basket:checkout` — full payload + `fulfilment: delivery` header  
+4. On **428**, Hyper adaptive solve (~30s wait + PoW + sensors) → retry checkout  
+
+**Success output:**
+
+```json
+{
+  "product_id": "7885338",
+  "postcode": "M1 1AE",
+  "fulfilment": "delivery",
+  "snapshot_id": "ffdb17d1-...",
+  "redirect_to": "/checkout/ffdb17d1-...?fulfilment=delivery",
+  "checked_at": "2026-08-28T16:37:57Z"
+}
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--product` | | Product ID or URL |
+| `--postcode` | | UK postcode for delivery |
+| `--timeout` | `120s` | Overall timeout (includes adaptive wait if challenged) |
+| `--proxy` | | Proxy URL (else env / `.env`) |
+| `--quiet` | `false` | Suppress stderr summary |
+
+**Scale:** each run uses one sticky proxy session + cookie jar. For concurrent throughput, run N workers with N distinct sticky proxy sessions (one client/session each).
 
 ---
 
@@ -164,7 +213,7 @@ JSON (stdout) + console summary (stderr)
 | Package | Role |
 |---------|------|
 | `cmd/argos` | Flags, `.env` load, orchestration, exit codes |
-| `internal/argos` | TLS client, product HTML, collection/delivery requests |
+| `internal/argos` | TLS client, product HTML, availability + basket/checkout |
 | `internal/normalize` | Argos JSON → stable schema |
 | `internal/model` | Output types |
 
@@ -205,6 +254,7 @@ Same first-party endpoint the Argos website uses. Undocumented; may change.
 | `github.com/bogdanfinn/tls-client` | TLS/HTTP2 client |
 | `github.com/bogdanfinn/fhttp` | HTTP types used by tls-client |
 | `github.com/bogdanfinn/utls` | ClientHello construction |
+| `github.com/Hyper-Solutions/hyper-sdk-go/v2` | Akamai adaptive SEC-CPT (checkout only) |
 
 See `go.mod` / `go.sum` for exact versions.
 
@@ -225,7 +275,7 @@ See `go.mod` / `go.sum` for exact versions.
 
 | | |
 |--|--|
-| Provider (dev) | [BottingTools](https://bottingtools.com) UK residential (sticky session in username) |
+| Provider (dev) | OneStopProxies UK residential (sticky session in username) |
 | Purpose | Optional egress so the tool can run from an environment Argos accepts when direct egress receives 403 |
 | Integration | `.env` `HTTP_PROXY`/`HTTPS_PROXY` or `--proxy` → tls-client `WithProxyUrl` |
 | Cost | Provider plan / bandwidth (not included in this repo). Many home/office UK networks need **no** proxy (**$0**) |
@@ -235,11 +285,21 @@ See `go.mod` / `go.sum` for exact versions.
 
 This is standard HTTP proxy configuration for reproducible egress — not CAPTCHA solving and not access-control bypass.
 
-### Evaluated, not shipped
+### Hyper Solutions (checkout only)
+
+| | |
+|--|--|
+| Purpose | Akamai **adaptive SEC-CPT** on `basket-api/v3/basket:checkout` (HTTP 428) |
+| Integration | `internal/argos/akamai.go` — PoW + sensor posts + verify, then retry checkout |
+| Cost | Hyper plan / per-solve billing (see hypersolutions.co) |
+| Setup | Set `HYPER_API_KEY` in `.env` |
+
+Availability (`--mode collection|delivery`) does **not** require Hyper. Checkout does when Argos returns 428.
+
+### Evaluated, not shipped (availability path)
 
 | Service | Cost if used | Why not shipped |
 |---------|--------------|-----------------|
-| Hyper Solutions (Akamai sensors) | ~€3 / 1 000 sensors | Unnecessary once the Chrome-compatible TLS profile was accepted |
 | chromedp / headed Chrome | Free software | Forbidden as final runtime |
 
 **No paid extraction API and no CAPTCHA solver in the final runtime.**
